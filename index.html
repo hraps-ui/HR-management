@@ -179,12 +179,11 @@ async function loginAdm(){
    const localSnapshot=readStore();
    const localHasData=(localSnapshot.emp||[]).length||(localSnapshot.vac||[]).length||(localSnapshot.cand||[]).length||(localSnapshot.grievances||[]).length;
    const proceed=confirm("The Supabase shared database is empty. "+(localHasData?"Import the existing HR data from this browser (including employee records, HR records and grievances) into the shared database now?":"Initialize the shared database now?")+" This one-time import will not delete your browser's existing local copy.");
-   if(proceed){
-    const migrated=await gs("api_save",TOKEN,loaded.hash,JSON.stringify(localSnapshot));
-    if(!migrated||!migrated.ok){TOKEN="";msg((migrated&&migrated.msg)||"Could not initialize the shared database. Your local data has been kept.");return}
-    loaded=await gs("api_load",TOKEN);if(!loaded||!loaded.ok){TOKEN="";msg((loaded&&loaded.msg)||"Could not reload shared HR data.");return}
-    toast("HR data was imported to the shared Supabase database.")
-   }
+   if(!proceed){TOKEN="";msg("Import cancelled. Your existing browser data has been left untouched. Sign in again when ready to initialize the shared database.");return}
+   const migrated=await gs("api_save",TOKEN,loaded.hash,JSON.stringify(localSnapshot));
+   if(!migrated||!migrated.ok){TOKEN="";msg((migrated&&migrated.msg)||"Could not initialize the shared database. Your local data has been kept.");return}
+   loaded=await gs("api_load",TOKEN);if(!loaded||!loaded.ok){TOKEN="";msg((loaded&&loaded.msg)||"Could not reload shared HR data.");return}
+   toast("HR data was imported to the shared Supabase database.")
   }
   setData(loaded);IN=true;CHG=false;PWCHG=false;
   const matchedEmployee=(D.emp||[]).find(x=>String(code(x)).trim().toLowerCase()===id.toLowerCase()||(r.empId!=null&&String(x.id)===String(r.empId)));
