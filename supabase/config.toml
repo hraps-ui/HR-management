@@ -1,0 +1,4 @@
+# Disable gateway JWT verification because the function implements its own short-lived portal sessions.
+# Requests still require the Supabase project API key; authorization and role checks happen in portal-api.
+[functions.portal-api]
+verify_jwt = false
