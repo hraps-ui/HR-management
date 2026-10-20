@@ -137,44 +137,67 @@ const emptyD=()=>({emp:[],vac:[],cand:[],lett:[],dsg:[],grievances:[],salarySlip
 const readStore=()=>{try{return JSON.parse(localStorage.getItem(STORE_KEY))||emptyD()}catch(e){return emptyD()}};
 const writeStore=d=>{try{localStorage.setItem(STORE_KEY,JSON.stringify(d));return true}catch(e){return false}};
 const getCred=()=>{const fallback={adminId:"admin123",adminPw:"admin123",viewerId:"viewer",viewerPw:"viewer123",employeePasswords:{}};try{const c=JSON.parse(localStorage.getItem(CRED_KEY))||{};return {...fallback,...c,employeePasswords:c.employeePasswords&&typeof c.employeePasswords==="object"?c.employeePasswords:{}}}catch(e){return fallback}};
+/* Public project identifiers only. The service-role key is kept in Supabase Function secrets. */
+const SUPABASE_URL="https://rrcolbhgfzdbjprbuzer.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY="sb_publishable_QwDqb0JM8-CHpiatbJLPJw_STYAuhgC";
+const CLOUD_ENDPOINT=SUPABASE_URL+"/functions/v1/portal-api";
 const gs=async(fn,...a)=>{
- const creds=getCred();
- if(fn==="api_login"){
-  const [rawId,pw]=a,id=String(rawId||"").trim();
-  const data=readStore(),person=(data.emp||[]).find(e=>String(code(e)).trim().toLowerCase()===id.toLowerCase());
-  if(person){
-   if(person.status==="Resigned")return {ok:false,msg:"This employee account is inactive. Please contact HR."};
-   const assignedRole=String(person.portalRole||"User").toLowerCase()==="admin"?"admin":"user";
-   if(assignedRole==="admin"&&pw===creds.adminPw)return {ok:true,token:"local-employee-admin-"+person.id,role:"admin",empId:person.id};
-   const savedEmployeePassword=String((creds.employeePasswords||{})[String(person.id)]||"");
-   const expectedEmployeePassword=savedEmployeePassword||employeeDefaultPassword(person);
-   if(assignedRole==="user"&&pw===expectedEmployeePassword)return {ok:true,token:"local-employee-"+person.id,role:"employee",empId:person.id};
-   return {ok:false,msg:"Employee ID or password is incorrect, or your assigned role does not allow this login"};
-  }
-  // Compatibility fallback for existing installations that have not yet added an HR account as an employee.
-  if(id===creds.adminId&&pw===creds.adminPw)return {ok:true,token:"local-admin",role:"admin"};
-  if(id===creds.viewerId&&pw===creds.viewerPw)return {ok:true,token:"local-viewer",role:"viewer"};
-  return {ok:false,msg:"Employee ID or password is incorrect. Check the Employee ID and assigned portal role."}
- }
- if(fn==="api_load"||fn==="api_poll"){const d=readStore();return {ok:true,changed:true,data:JSON.stringify(d),hash:"local",...d}}
- if(fn==="api_save"){const d=JSON.parse(a[2]);if(!writeStore(d))return {ok:false,msg:"Browser storage is full or unavailable"};return {ok:true,hash:"local"}}
- if(fn==="api_submitGrievance"){const g=a[1],d=readStore();d.grievances=d.grievances||[];d.grievances.unshift(g);if(!writeStore(d))return {ok:false,msg:"Browser storage is unavailable"};return {ok:true,grievance:g}}
- if(fn==="api_logout")return {ok:true};
- if(fn==="api_info")return {ok:true,adminId:creds.adminId,viewerId:creds.viewerId};
- if(fn==="api_setCred"){const [token,role,id,pw,current]=a;const c=getCred();if(role==="admin"&&current!==c.adminPw)return {ok:false,msg:"Current admin password is incorrect"};if(role==="admin"){c.adminId=id;c.adminPw=pw}else{c.viewerId=id;c.viewerPw=pw}try{localStorage.setItem(CRED_KEY,JSON.stringify(c));return {ok:true}}catch(e){return {ok:false,msg:"Could not save credentials in this browser"}}}
- if(fn==="api_changeEmployeePassword"){const [empId,currentPw,newPw]=a;const data=readStore(),person=(data.emp||[]).find(e=>String(e.id)===String(empId)),c=getCred();if(!person)return {ok:false,msg:"Employee profile could not be found"};if(String(person.portalRole||"User").toLowerCase()==="admin")return {ok:false,msg:"Admin accounts must use the Admin password settings"};const saved=String((c.employeePasswords||{})[String(person.id)]||"");const expected=saved||employeeDefaultPassword(person);if(currentPw!==expected)return {ok:false,msg:"Current password is incorrect"};if(typeof newPw!=="string"||newPw.length<8)return {ok:false,msg:"New password must be at least 8 characters"};c.employeePasswords=c.employeePasswords||{};c.employeePasswords[String(person.id)]=newPw;try{localStorage.setItem(CRED_KEY,JSON.stringify(c));return {ok:true}}catch(e){return {ok:false,msg:"Could not save password in this browser"}}}
- return {ok:false,msg:"Unsupported local action: "+fn};
+ try{
+  const response=await fetch(CLOUD_ENDPOINT,{method:"POST",headers:{"content-type":"application/json","apikey":SUPABASE_PUBLISHABLE_KEY},body:JSON.stringify({action:fn,args:a}),cache:"no-store"});
+  const result=await response.json().catch(()=>null);
+  if(!response.ok||!result)return {ok:false,msg:(result&&result.msg)||("Shared HR API returned HTTP "+response.status+". Check the Supabase Edge Function deployment and configuration.")};
+  return result;
+ }catch(error){console.error("Shared HR API error:",error);return {ok:false,msg:"Could not reach the shared HR database. Check your internet connection and confirm the Supabase portal-api Edge Function is deployed."}}
 };
 function setData(r){const d=r.data?JSON.parse(r.data):r;d.emp=d.emp||[];d.vac=d.vac||[];d.cand=d.cand||[];d.lett=d.lett||[];d.dsg=d.dsg||[];d.grievances=d.grievances||[];D=norm(d);HASH=r.hash||"local"}
 function sessionLost(m){toast(m||"Your session has ended. Please login again.");lockAdm(true)}
 const save=()=>{if(!CAN||!IN)return;dirty=true;clearTimeout(saveTimer);saveTimer=setTimeout(flush,100)};
-async function flush(){saveTimer=null;if(!dirty||savingNow||!IN)return;dirty=false;savingNow=true;try{const ok=writeStore(D);if(!ok){dirty=true;toast("Could not save. Browser storage is unavailable.")}}catch(e){dirty=true;toast("Could not save in this browser.")}finally{savingNow=false}}
-function startPoll(){stopPoll()} function stopPoll(){clearInterval(pollTimer);pollTimer=null} async function poll(){}
-document.addEventListener("visibilitychange",()=>{});
-async function loginAdm(){const id=$("aid").value.trim(),pw=$("apw").value;if(!id||!pw)return msg("Enter your Employee ID and password");const b=document.querySelector("#auth .btn.p");if(b)b.disabled=true;
- try{const r=await gs("api_login",id,pw);if(!r.ok){msg(r.msg||"Employee ID or password is incorrect");return}TOKEN=r.token;ROLE=r.role;CAN=r.role==="admin";EMP_ID=r.empId||null;LOGIN_ID=id;const loginData=readStore(),matchedEmployee=(loginData.emp||[]).find(x=>String(code(x)).trim().toLowerCase()===id.toLowerCase()||(r.empId!=null&&String(x.id)===String(r.empId)));PROFILE_NAME=matchedEmployee&&matchedEmployee.name?String(matchedEmployee.name):(r.role==="admin"?"HR Admin":r.role==="employee"?"Employee":id);setData({data:JSON.stringify(loginData),hash:"local"});IN=true;CHG=false;sync();startPoll()}
- catch(e){msg("Could not open local HR data. Please try again.")}finally{const b2=document.querySelector("#auth .btn.p");if(b2)b2.disabled=false}}
-async function lockAdm(silent){stopPoll();if(!silent&&CAN&&IN&&(dirty||saveTimer)){clearTimeout(saveTimer);await flush()}TOKEN="";IN=false;CAN=false;CHG=false;PWCHG=false;ROLE="";EMP_ID=null;LOGIN_ID="";PROFILE_NAME="";MID=null;dirty=false;D=emptyD();HASH="";sync();mdlShow()}
+async function flush(){
+ saveTimer=null;if(!dirty||savingNow||!IN)return;dirty=false;savingNow=true;
+ const snapshot=JSON.stringify(D);
+ try{
+  writeStore(D);const result=await gs("api_save",TOKEN,HASH,snapshot);
+  if(result&&result.ok){HASH=result.hash||HASH;writeStore(D)}
+  else if(result&&result.sessionLost){sessionLost(result.msg)}
+  else if(result&&result.conflict){try{localStorage.setItem(STORE_KEY+"_conflict_backup",snapshot)}catch(e){}toast("Another device changed the shared HR data. Your pending changes were backed up in this browser, but not uploaded. Reload the portal before making more changes.")}
+  else{try{localStorage.setItem(STORE_KEY+"_cloud_error_backup",snapshot)}catch(e){}toast((result&&result.msg)||"Could not save to the shared database. A local recovery copy was kept.")}
+ }catch(e){try{localStorage.setItem(STORE_KEY+"_cloud_error_backup",snapshot)}catch(err){}toast("Cloud save failed. A local recovery copy was kept.")}
+ finally{savingNow=false}
+}
+function startPoll(){stopPoll();pollTimer=setInterval(poll,10000)}
+function stopPoll(){clearInterval(pollTimer);pollTimer=null}
+async function poll(){if(!IN||!TOKEN||dirty||savingNow||document.visibilityState==="hidden"||pollBusy)return;pollBusy=true;try{const r=await gs("api_poll",TOKEN,HASH);if(!r||!r.ok){if(r&&r.sessionLost)sessionLost(r.msg);return}if(r.changed&&r.data){setData(r);writeStore(D);render()}}catch(e){console.warn("Shared data refresh failed",e)}finally{pollBusy=false}}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")poll()});
+async function loginAdm(){
+ const id=$("aid").value.trim(),pw=$("apw").value;if(!id||!pw)return msg("Enter your Employee ID and password");
+ const b=document.querySelector("#auth .btn.p");if(b)b.disabled=true;
+ try{
+  const r=await gs("api_login",id,pw);if(!r.ok){msg(r.msg||"Employee ID or password is incorrect");return}
+  TOKEN=r.token;ROLE=r.role;CAN=r.role==="admin";EMP_ID=r.empId||null;LOGIN_ID=id;
+  let loaded=await gs("api_load",TOKEN);if(!loaded||!loaded.ok){TOKEN="";msg((loaded&&loaded.msg)||"Could not load the shared HR database.");return}
+  if(loaded.needsSeed&&CAN){
+   const localSnapshot=readStore();
+   const localHasData=(localSnapshot.emp||[]).length||(localSnapshot.vac||[]).length||(localSnapshot.cand||[]).length||(localSnapshot.grievances||[]).length;
+   const proceed=confirm("The Supabase shared database is empty. "+(localHasData?"Import the existing HR data from this browser (including employee records, HR records and grievances) into the shared database now?":"Initialize the shared database now?")+" This one-time import will not delete your browser's existing local copy.");
+   if(proceed){
+    const migrated=await gs("api_save",TOKEN,loaded.hash,JSON.stringify(localSnapshot));
+    if(!migrated||!migrated.ok){TOKEN="";msg((migrated&&migrated.msg)||"Could not initialize the shared database. Your local data has been kept.");return}
+    loaded=await gs("api_load",TOKEN);if(!loaded||!loaded.ok){TOKEN="";msg((loaded&&loaded.msg)||"Could not reload shared HR data.");return}
+    toast("HR data was imported to the shared Supabase database.")
+   }
+  }
+  setData(loaded);IN=true;CHG=false;PWCHG=false;
+  const matchedEmployee=(D.emp||[]).find(x=>String(code(x)).trim().toLowerCase()===id.toLowerCase()||(r.empId!=null&&String(x.id)===String(r.empId)));
+  PROFILE_NAME=matchedEmployee&&matchedEmployee.name?String(matchedEmployee.name):(r.role==="admin"?"HR Admin":"Employee");
+  writeStore(D);sync();startPoll();
+ }catch(e){console.error(e);TOKEN="";msg("Could not open the shared HR database. Please check the Supabase setup and try again.")}
+ finally{const b2=document.querySelector("#auth .btn.p");if(b2)b2.disabled=false}
+}
+async function lockAdm(silent){
+ stopPoll();if(!silent&&CAN&&IN&&(dirty||saveTimer)){clearTimeout(saveTimer);await flush()}
+ const oldToken=TOKEN;if(oldToken){try{await gs("api_logout",oldToken)}catch(e){}}
+ TOKEN="";IN=false;CAN=false;CHG=false;PWCHG=false;ROLE="";EMP_ID=null;LOGIN_ID="";PROFILE_NAME="";MID=null;dirty=false;D=emptyD();HASH="";sync();mdlShow()
+}
 function sync(){$("pf").hidden=!IN;pfRender();if(IN&&!window._in){window._in=1;const s=PR().start;if(s&&TABS.includes(s)&&(s!=="Settings"||CAN))tab=s}else if(!IN)window._in=0;showAuth();render();$("foot").innerHTML=""}
 function showAuth(){
  const el=$("auth");if(IN&&!CHG&&!PWCHG){el.innerHTML="";return}let h;
@@ -183,19 +206,20 @@ function showAuth(){
   h=`<h2>Change password</h2><div class="empty" style="padding:0 0 10px">Signed in as <b>${E((employee&&employee.name)||PROFILE_NAME||LOGIN_ID)}</b>. Enter your current password, then set a new password with at least 8 characters.</div><div class="stk"><label>Current password<input id="empCurrentPw" type="password" autocomplete="current-password" required></label><label>New password<input id="empNewPw" type="password" autocomplete="new-password" minlength="8" required></label><label>Confirm new password<input id="empNewPw2" type="password" autocomplete="new-password" minlength="8" required></label><button class="btn p" onclick="changeEmployeePassword()">Save new password</button><button class="btn" onclick="PWCHG=false;showAuth()">Cancel</button><div class="empty" id="pwmsg"></div></div>`;
  }else if(CHG){
   const f=(p,ph,cur)=>`<input id="${p}id" placeholder="${ph} ID" autocomplete="username" value="${E(cur||"")}"><input id="${p}pw" type="password" placeholder="New password" autocomplete="new-password"><input id="${p}pw2" type="password" placeholder="Confirm new password" autocomplete="new-password">`;
-  h=`<h2>Login settings</h2><div class="empty" style="padding:0 0 8px"><b>Admin login</b></div><div class="stk"><input id="acp" type="password" placeholder="Current admin password">${f("a","Admin",INFO.adminId)}<button class="btn p" onclick="saveCred('a')">Save admin login</button></div><div class="empty" style="padding:14px 0 8px"><b>Legacy viewer login</b></div><div class="stk">${f("v","Viewer",INFO.viewerId)}<button class="btn p" onclick="saveCred('v')">Save viewer login</button></div><div class="empty" id="amsg"></div><div class="row" style="margin:0"><button class="btn" onclick="CHG=false;showAuth()">Close</button></div>`;
+  h=\`<h2>Admin login settings</h2><div class="empty" style="padding:0 0 8px">Change the shared cloud administrator ID and password. Passwords are stored as salted hashes in Supabase.</div><div class="stk"><label>Current admin password<input id="acp" type="password" autocomplete="current-password"></label><label>New admin ID<input id="aid2" value="\${E(INFO.adminId||"")}" autocomplete="username"></label><label>New admin password<input id="apw2" type="password" autocomplete="new-password"></label><label>Confirm new admin password<input id="apw22" type="password" autocomplete="new-password"></label><button class="btn p" onclick="saveCred('a')">Save admin login</button></div><div class="empty" id="amsg"></div><div class="row" style="margin:0"><button class="btn" onclick="CHG=false;showAuth()">Close</button></div>\`;
  }else{
   h=`<h2 style="font-size:20px;margin:0 0 12px">🔐 Login</h2><div class="stk"><input id="aid" aria-label="ID" placeholder="ID" autocomplete="username" required><input id="apw" type="password" aria-label="Password" placeholder="Password" autocomplete="current-password" required><button class="btn p" onclick="loginAdm()" style="padding:10px">Login</button></div><div class="empty" id="amsg" style="padding-top:12px;text-align:center">Enter your ID and password to open the dashboard.</div>`;
  }
  el.innerHTML=`<div class="dlg"><div class="card">${h}</div></div>`;
  el.querySelectorAll("input").forEach(x=>x.addEventListener("keydown",e=>{if(e.key==="Enter"&&!CHG){const b=el.querySelector(".btn.p");if(b)b.click()}}));
 }
-async function openLS(){if(!CAN)return;INFO=getCredInfo();CHG=true;PWCHG=false;showAuth()}
+async function openLS(){if(!CAN)return;const r=await gs("api_info",TOKEN);if(!r||!r.ok)return toast((r&&r.msg)||"Could not load admin login settings.");INFO={adminId:r.adminId||"",viewerId:""};CHG=true;PWCHG=false;showAuth()}
 function openEmployeePasswordChange(){if(!IN||ROLE!=="employee")return;CHG=false;PWCHG=true;showAuth()}
-async function changeEmployeePassword(){const current=$("empCurrentPw").value,newPw=$("empNewPw").value,newPw2=$("empNewPw2").value;if(!current)return pwMsg("Enter your current password");if(newPw.length<8)return pwMsg("New password must be at least 8 characters");if(newPw!==newPw2)return pwMsg("New passwords do not match");if(newPw===current)return pwMsg("Choose a password different from your current password");const r=await gs("api_changeEmployeePassword",EMP_ID,current,newPw);if(!r.ok)return pwMsg(r.msg||"Could not change password");PWCHG=false;showAuth();toast("Password changed successfully. Use your new password next time you log in.")}
+async function changeEmployeePassword(){const current=$("empCurrentPw").value,newPw=$("empNewPw").value,newPw2=$("empNewPw2").value;if(!current)return pwMsg("Enter your current password");if(newPw.length<8)return pwMsg("New password must be at least 8 characters");if(newPw!==newPw2)return pwMsg("New passwords do not match");if(newPw===current)return pwMsg("Choose a password different from your current password");const r=await gs("api_changeEmployeePassword",TOKEN,EMP_ID,current,newPw);if(!r.ok)return pwMsg(r.msg||"Could not change password");PWCHG=false;showAuth();toast("Password changed successfully. Use your new password next time you log in.")}
 function pwMsg(t){const el=$("pwmsg");if(el){el.textContent=t;el.style.color="var(--dn)"}else toast(t)}
-function getCredInfo(){const c=getCred();return {adminId:c.adminId,viewerId:c.viewerId}}
-async function saveCred(k){const a=k==="a",p=a?"a":"v",id=$(p+"id").value.trim(),pw=$(p+"pw").value,p2=$(p+"pw2").value;if(id.length<3)return msg("ID must be at least 3 characters");if(pw.length<6)return msg("Password must be at least 6 characters");if(pw!==p2)return msg("Passwords do not match");if(a&&!$("acp").value)return msg("Enter the current admin password");const r=await gs("api_setCred",TOKEN,a?"admin":"viewer",id,pw,a?$("acp").value:"");if(!r.ok)return msg(r.msg||"Could not save login");INFO=getCredInfo();msg("Saved")}
+function getCredInfo(){return {adminId:INFO.adminId||"",viewerId:""}}
+async function saveCred(k){const id=$("aid2").value.trim(),pw=$("apw2").value,p2=$("apw22").value,current=$("acp").value;if(id.length<3)return msg("Admin ID must be at least 3 characters");if(pw.length<10)return msg("New admin password must be at least 10 characters");if(pw!==p2)return msg("Passwords do not match");if(!current)return msg("Enter the current admin password");const r=await gs("api_setCred",TOKEN,"admin",id,pw,current);if(!r.ok)return msg(r.msg||"Could not save login");INFO.adminId=r.adminId||id;msg("Admin login updated")}
+
 /* ---- downloads: the page code calls claude.use("downloads").save({filename,data}) ---- */
 const MIMES={pdf:"application/pdf",docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",json:"application/json"};
 async function saveFile(o){const name=o.filename,ext=String(name).split(".").pop().toLowerCase();
@@ -725,7 +749,7 @@ function fileAsDataURL(file){return new Promise((resolve,reject)=>{const r=new F
 async function readGrievanceAttachment(prefix){const input=$(prefix+"bankDocument"),f=input&&input.files&&input.files[0];if(!f)return null;const ext=f.name.split(".").pop().toLowerCase();if(ext==="pdf"){if(f.size>700*1024)throw new Error("PDF must be 700 KB or smaller.");const dataUrl=await fileAsDataURL(f);return{name:f.name,type:"application/pdf",dataUrl,size:f.size}}if(!["jpg","jpeg","png"].includes(ext))throw new Error("Please attach a PDF, JPG or PNG file.");const original=await fileAsDataURL(f);const dataUrl=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>{try{const scale=Math.min(1,1200/Math.max(im.naturalWidth,im.naturalHeight));const c=document.createElement("canvas");c.width=Math.max(1,Math.round(im.naturalWidth*scale));c.height=Math.max(1,Math.round(im.naturalHeight*scale));const ctx=c.getContext("2d");ctx.drawImage(im,0,0,c.width,c.height);resolve(c.toDataURL("image/jpeg",0.72))}catch(e){reject(new Error("Unable to compress the image. Please try another photo."))}};im.onerror=()=>reject(new Error("Could not open the selected image."));im.src=original});const approxBytes=Math.floor((dataUrl.length-String(dataUrl).indexOf(",")-1)*3/4);if(approxBytes>900*1024)throw new Error("The compressed image is still too large. Please use a smaller cheque/passbook photo.");return{name:f.name.replace(/\.(png|jpe?g)$/i,".jpg"),type:"image/jpeg",dataUrl,size:approxBytes}}
 function downloadGrievanceAttachment(id){if(!CAN)return;const g=(D.grievances||[]).find(x=>Number(x.id)===Number(id)),d=g&&g.bankDocument;if(!d||!d.dataUrl)return toast("Bank proof is not available.");const a=document.createElement("a");a.href=d.dataUrl;a.download=d.name||"bank-proof";document.body.appendChild(a);a.click();a.remove()}
 async function makeGrievance(prefix){const get=id=>$(prefix+id);const loggedEmployee=prefix==="g_"&&ROLE==="employee"?(D.emp||[]).find(x=>String(x.id)===String(EMP_ID)):null;const empCode=loggedEmployee?code(loggedEmployee):get("empCode").value.trim(),name=loggedEmployee?(loggedEmployee.name||""):get("name").value.trim(),details=get("details").value.trim(),category=get("category").value;if(!empCode||!name||!details){toast("Enter employee code, employee name and grievance details.");return null}let bankName="",accountNumber="",ifscCode="",bankDocument=null;if(category==="Account Update"){bankName=get("bankName").value.trim();if(!bankName){toast("Enter the bank name.");return null}accountNumber=get("accountNumber").value.trim().replace(/\s+/g,"");if(!/^\d{6,20}$/.test(accountNumber)){toast("Enter a valid bank account number (6–20 digits).");return null}ifscCode=get("ifscCode").value.trim().toUpperCase();if(!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscCode)){toast("Enter a valid 11-character IFSC code, e.g. HDFC0001234.");return null}try{bankDocument=await readGrievanceAttachment(prefix)}catch(e){toast(e.message||"Could not read the bank proof attachment.");return null}}const now=new Date();return{id:Date.now(),number:"GRV-"+now.getFullYear()+"-"+String(Date.now()).slice(-6),date:now.toISOString().slice(0,10),createdAt:now.toISOString(),empCode,name,dept:loggedEmployee?(loggedEmployee.dept||""):get("dept").value.trim(),category,details,bankName,accountNumber,ifscCode,bankDocument,contact:prefix=="g_"?$("g_contact").value.trim():"",owner:prefix=="gh_"?$("gh_owner").value.trim():"",status:"Open",submittedBy:prefix=="gh_"?"HR":"Employee",history:[]}}
-async function submitGrievance(){if(!IN)return;const g=await makeGrievance("g_");if(!g)return;try{const r=await gs("api_submitGrievance",TOKEN,g);if(!r||!r.ok){toast((r&&r.msg)||"Could not submit grievance. Please try again.");return}if(r.grievance)g.id=r.grievance.id||g.id;D.grievances=D.grievances||[];D.grievances.unshift(g);toast("Grievance submitted. Reference: "+g.number);gMode="employee";render()}catch(e){toast("Could not save this grievance. Check available browser storage and try again.")}}
+async function submitGrievance(){if(!IN)return;const g=await makeGrievance("g_");if(!g)return;try{const r=await gs("api_submitGrievance",TOKEN,g);if(!r||!r.ok){toast((r&&r.msg)||"Could not submit grievance. Please try again.");return}if(r.grievance)g.id=r.grievance.id||g.id;if(r.hash)HASH=r.hash;D.grievances=D.grievances||[];D.grievances.unshift(g);writeStore(D);toast("Grievance submitted. Reference: "+g.number);gMode="employee";render()}catch(e){toast("Could not save this grievance. Check available browser storage and try again.")}}
 async function hrAddGrievance(){if(!CAN)return;const g=await makeGrievance("gh_");if(!g)return;g.id=D.nid++;D.grievances=D.grievances||[];D.grievances.unshift(g);save();render();toast("Grievance registered: "+g.number)}
 function updateGrievance(id,key,value){if(!CAN)return;const g=(D.grievances||[]).find(x=>x.id==id);if(!g)return;const prior=g[key];if(prior===value)return;g[key]=value;if(key==="status"&&["Resolved","Closed"].includes(value))g.resolvedAt=new Date().toISOString();g.history=g.history||[];g.history.push({at:new Date().toISOString(),field:key,value,by:"HR"});const notify=(key==="status"&&value==="Resolved"&&prior!=="Resolved"&&!(g.whatsappNotification&&g.whatsappNotification.sentAt));save();render();if(notify)sendGrievanceResolvedWhatsApp(Number(id))}
 async function deleteGrievance(id){if(!CAN||!await ask("Delete this grievance record?"))return;D.grievances=(D.grievances||[]).filter(g=>g.id!=id);save();render();toast("Grievance deleted")}
