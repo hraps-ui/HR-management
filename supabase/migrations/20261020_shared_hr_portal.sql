@@ -39,6 +39,11 @@ alter table public.portal_state enable row level security;
 alter table public.portal_users enable row level security;
 alter table public.portal_sessions enable row level security;
 
+-- The server-side Edge Function connects as service_role; browsers have no direct table access.
+grant all on table public.portal_state to service_role;
+grant all on table public.portal_users to service_role;
+grant all on table public.portal_sessions to service_role;
+
 -- No direct browser access to HR rows. Only the Edge Function's service role may read/write them.
 revoke all on public.portal_state from anon, authenticated;
 revoke all on public.portal_users from anon, authenticated;
