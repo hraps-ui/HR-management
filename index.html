@@ -162,7 +162,7 @@ async function flush(){
   else if(result&&result.conflict){try{localStorage.setItem(STORE_KEY+"_conflict_backup",snapshot)}catch(e){}toast("Another device changed the shared HR data. Your pending changes were backed up in this browser, but not uploaded. Reload the portal before making more changes.")}
   else{try{localStorage.setItem(STORE_KEY+"_cloud_error_backup",snapshot)}catch(e){}toast((result&&result.msg)||"Could not save to the shared database. A local recovery copy was kept.")}
  }catch(e){try{localStorage.setItem(STORE_KEY+"_cloud_error_backup",snapshot)}catch(err){}toast("Cloud save failed. A local recovery copy was kept.")}
- finally{savingNow=false}
+ finally{savingNow=false;if(dirty&&IN&&!saveTimer)saveTimer=setTimeout(flush,300)}
 }
 function startPoll(){stopPoll();pollTimer=setInterval(poll,10000)}
 function stopPoll(){clearInterval(pollTimer);pollTimer=null}
