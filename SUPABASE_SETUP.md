@@ -50,3 +50,17 @@ After SQL succeeds, the private function secrets are saved, and the GitHub Actio
 - Do not clear the original browser's site data until cross-device sync and the employee directory have been verified.
 - If two administrators edit the same data at once, the portal displays a conflict warning rather than silently overwriting the newer cloud version. A local recovery snapshot is saved in that browser.
 - This is an initial working setup, not a substitute for a production security review. Before storing highly sensitive records at scale, test role scoping, backups, account deactivation, and all key HR workflows with dummy records.
+
+## Troubleshooting the current deployment failure
+
+The last recorded Supabase deployment attempt failed because GitHub Actions had an empty `SUPABASE_ACCESS_TOKEN` environment value. This is a missing repository secret, not an HTML syntax problem.
+
+Fix it here:
+1. Open [GitHub Actions repository secrets](https://github.com/hraps-ui/HR-management/settings/secrets/actions).
+2. Choose **New repository secret**.
+3. Set the exact name to `SUPABASE_ACCESS_TOKEN` (uppercase, underscores, no spaces).
+4. Paste the Supabase Personal Access Token value, then save.
+5. Open [the Supabase deployment workflow](https://github.com/hraps-ui/HR-management/actions/workflows/deploy-supabase-function.yml) and click **Run workflow**.
+6. Confirm the run ends with a green check. If it fails again, open the failed run and inspect the **Deploy portal-api Edge Function** step.
+
+Do not use the project URL, publishable key, database password, or service-role key as the GitHub Actions access token. The token is created separately under Supabase Account Tokens. I cannot create or read this private token on your behalf.
