@@ -1,7 +1,15 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
 const PROJECT_URL = (Deno.env.get("SUPABASE_URL") || "").replace(/\/+$/, "");
-const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SECRET_KEY") || "";
+function serverKey() {
+  const legacy = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (legacy) return legacy;
+  try {
+    const keys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}");
+    return String(keys.default || "");
+  } catch { return ""; }
+}
+const SERVICE_KEY = serverKey();
 const BOOTSTRAP_ID = (Deno.env.get("PORTAL_BOOTSTRAP_ADMIN_ID") || "").trim();
 const BOOTSTRAP_PASSWORD = Deno.env.get("PORTAL_BOOTSTRAP_ADMIN_PASSWORD") || "";
 const ALLOWED_ORIGIN = "https://hraps-ui.github.io";
@@ -39,7 +47,8 @@ async function db(path: string, init: RequestInit = {}): Promise<any> {
   if (!PROJECT_URL || !SERVICE_KEY) throw new Error("Supabase server secrets are missing. Configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY for this Edge Function.");
   const headers = new Headers(init.headers || {});
   headers.set("apikey", SERVICE_KEY);
-  headers.set("authorization", "Bearer " + SERVICE_KEY);
+  // Legacy service_role keys are JWTs; modern sb_secret keys are not. Never send a secret key as Bearer.
+  if (SERVICE_KEY.startsWith("eyJ")) headers.set("authorization", "Bearer " + SERVICE_KEY);
   headers.set("content-type", "application/json");
   const response = await fetch(PROJECT_URL + "/rest/v1/" + path, { ...init, headers });
   const raw = await response.text();
